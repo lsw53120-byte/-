@@ -1,0 +1,5 @@
+customtkinter>=5.2.2,<6
+selenium>=4.26,<5
+requests>=2.32.3,<3
+defusedxml>=0.7.1,<1
+pyinstaller>=6.11,<7
