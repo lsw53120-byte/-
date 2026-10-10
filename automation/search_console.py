@@ -70,13 +70,15 @@ class SearchConsole:
 
     def inspect(self, url):
         try:
+            self._dismiss_dialogs()
+            self._wait_for_idle()
             box = self._search_box()
             box.click()
             box.send_keys(Keys.CONTROL, "a")
             box.send_keys(url)
             box.send_keys(Keys.ENTER)
             WebDriverWait(self.driver, self.timeout).until(
-                lambda d: self._result_ready(d))
+                lambda d: self._result_ready(d, url))
             body = self.driver.find_element(By.TAG_NAME, "body").text
             status = parse_status(body)
             if status == Status.UNKNOWN and any(x in body.lower() for x in ("sign in", "로그인", "계정 선택")):
@@ -93,15 +95,42 @@ class SearchConsole:
             raise SearchConsoleTimeout(f"브라우저 작업 실패: {exc}") from exc
 
     @staticmethod
-    def _result_ready(driver):
+    def _result_ready(driver, expected_url=None):
         try:
             body = driver.find_element(By.TAG_NAME, "body").text.lower()
+            if any(token in body for token in (
+                "google 색인에서 데이터를 가져오는 중",
+                "google 색인에서 데이터 가져오는 중",
+                "fetching data from google index",
+            )):
+                return False
+            if expected_url:
+                target = expected_url.rstrip("/").lower()
+                if target and target not in body:
+                    return False
             return any(token in body for token in (
                 "url is on google", "url is not on google", "url이 google에 등록",
                 "discovered - currently", "crawled - currently", "발견됨", "크롤링됨",
                 "현재 색인이 생성되지", "페이지 색인이 생성됨"))
         except WebDriverException:
             return False
+
+    def _wait_for_idle(self):
+        """Wait until a previous URL's Search Console loading layer is gone."""
+        def idle(driver):
+            try:
+                body = driver.find_element(By.TAG_NAME, "body").text.lower()
+                return not any(token in body for token in (
+                    "google 색인에서 데이터를 가져오는 중",
+                    "google 색인에서 데이터 가져오는 중",
+                    "fetching data from google index",
+                ))
+            except WebDriverException:
+                return False
+        try:
+            WebDriverWait(self.driver, self.timeout).until(idle)
+        except TimeoutException as exc:
+            raise SearchConsoleTimeout("이전 URL의 Search Console 데이터 로딩이 끝나지 않았습니다.") from exc
 
     @staticmethod
     def _canonical(body):
@@ -115,12 +144,16 @@ class SearchConsole:
             raise IndexRequestError("Google 요청 한도 안내가 표시되었습니다.")
         candidates = self.driver.find_elements(
             By.XPATH,
-            "//*[self::button or @role='button']["
+            "//*[self::button or self::a or self::div or self::span or @role='button']["
             "contains(@aria-label,'Request indexing') or contains(@aria-label,'색인 생성 요청') or "
             "contains(@aria-label,'색인 재요청') or contains(normalize-space(.),'Request indexing') or "
             "contains(normalize-space(.),'색인 생성 요청') or contains(normalize-space(.),'색인 재요청')]"
         )
         candidates = [button for button in candidates if button.is_displayed() and button.is_enabled()]
+        # Google wraps the request label in several nested containers. Prefer
+        # the smallest visible matching node so the click lands on the actual
+        # link/button rather than its large result-card ancestor.
+        candidates.sort(key=lambda element: len((element.text or "").strip()))
         if not candidates:
             raise IndexRequestError("화면에서 색인 생성 요청 버튼을 찾지 못했습니다.")
         self._click_visible(candidates[0])
@@ -147,10 +180,49 @@ class SearchConsole:
                 self._click_visible(confirm)
             WebDriverWait(self.driver, 20).until(
                 accepted)
+            self._dismiss_dialogs()
             return "Google 화면에서 요청 접수 확인"
         except TimeoutException as exc:
             self._capture(url)
             raise IndexRequestError("요청 접수 확인 문구를 확인하지 못했습니다. 요청이 전송됐는지 Search Console에서 확인하세요.") from exc
+
+    def _dismiss_dialogs(self):
+        """Close Search Console's success/info dialog before the next URL."""
+        # Search Console's success toast/modal is not consistently exposed as
+        # [role='dialog']; on some runs only the global `닫기` button is
+        # discoverable while the rest of the page is dimmed.
+        close_xpath = (
+            "//*[self::button or self::a or self::div or self::span or @role='button']["
+            "normalize-space()='닫기' or normalize-space()='Close' or "
+            "contains(@aria-label,'닫기') or contains(@aria-label,'Close')]"
+        )
+        for _ in range(2):
+            try:
+                visible = [
+                    button for button in self.driver.find_elements(By.XPATH, close_xpath)
+                    if button.is_displayed() and button.is_enabled()
+                ]
+            except WebDriverException:
+                return
+            if not visible:
+                return
+            # Prefer the actual button over nested text/containers, then the
+            # shortest label so an ancestor card is never clicked by mistake.
+            visible.sort(key=lambda element: (
+                0 if element.tag_name.lower() == "button" or element.get_attribute("role") == "button" else 1,
+                len((element.text or "").strip()),
+            ))
+            try:
+                self._click_visible(visible[0])
+                WebDriverWait(self.driver, 5).until(
+                    lambda d: not any(
+                        button.is_displayed() and button.is_enabled()
+                        for button in d.find_elements(By.XPATH, close_xpath)
+                    )
+                )
+                return
+            except (TimeoutException, WebDriverException):
+                self.log.warning("Could not close Search Console dialog")
 
     def _click_visible(self, element):
         """Use a normal click only when the target is visibly uncovered."""
@@ -187,3 +259,4 @@ class SearchConsole:
             except Exception:
                 self.log.exception("ChromeDriver detach failed")
             self.driver = None
+
