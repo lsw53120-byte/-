@@ -1,4 +1,5 @@
 import gzip
+import re
 import requests
 from defusedxml import ElementTree as ET
 from urllib.parse import urlsplit
@@ -6,6 +7,7 @@ from core.url_normalizer import normalize_many, normalize_url
 from utils.exceptions import NetworkError
 
 HEADERS = {"User-Agent": "SearchConsoleDiagnosticTool/2.0 (sitemap reader)"}
+MATNAM_HOST = "matnam12.blogspot.com"
 
 
 def _fetch(url, timeout=15):
@@ -28,7 +30,21 @@ def _locs(body):
     return [(node.text or "").strip() for node in root.iter() if node.tag.rsplit("}", 1)[-1].lower() == "loc" and node.text]
 
 
-def collect(source_lines, limit, stop_event=None, progress=None):
+def _site_url(raw, host, allowed_host=None):
+    try:
+        url = normalize_url(raw)
+    except Exception:
+        return None
+    parsed = urlsplit(url)
+    if parsed.hostname != host or (allowed_host and parsed.hostname != allowed_host):
+        return None
+    path = parsed.path.lower()
+    if host.lower() in path or re.search(r"https?[^/]*blogspot\.com", path):
+        return None
+    return url
+
+
+def collect(source_lines, limit, stop_event=None, progress=None, allowed_host=None):
     def cancelled():
         return stop_event is not None and stop_event.is_set()
 
@@ -40,13 +56,22 @@ def collect(source_lines, limit, stop_event=None, progress=None):
     if not lines:
         raise ValueError("URL을 입력하세요.")
     if len(lines) > 1:
-        urls = normalize_many(lines)[:limit]
+        urls = []
+        for line in lines:
+            normalized = normalize_url(line)
+            url = _site_url(normalized, urlsplit(normalized).hostname, allowed_host)
+            if url:
+                urls.append(url)
+        urls = list(dict.fromkeys(urls))[:limit]
         report("입력한 URL을 정리했습니다.", len(urls))
         return None, urls
     source = lines[0]
     if "://" not in source:
         source = "https://" + source
     source = normalize_url(source)
+    source_host = urlsplit(source).hostname
+    if allowed_host and source_host != allowed_host:
+        raise ValueError(f"matnam 사이트만 지원합니다: https://{MATNAM_HOST}/")
     parsed_source = source.lower()
     if ".xml" in parsed_source or "sitemap" in parsed_source:
         found, visited = [], set()
@@ -64,7 +89,9 @@ def collect(source_lines, limit, stop_event=None, progress=None):
                 if ".xml" in loc.lower() and len(found) < limit:
                     queue.append(loc)
                 elif loc.startswith(("http://", "https://")):
-                    found.append(normalize_url(loc))
+                    url = _site_url(loc, source_host, allowed_host)
+                    if url:
+                        found.append(url)
         if found:
             urls = list(dict.fromkeys(found))[:limit]
             report("사이트맵에서 URL을 찾았습니다.", len(urls))
@@ -90,7 +117,9 @@ def collect(source_lines, limit, stop_event=None, progress=None):
                     href = node.attrib.get("href") or (node.text or "").strip()
                     rel = node.attrib.get("rel", "alternate").lower()
                     if href.startswith(("https://", "http://")) and rel == "alternate" and "/feeds/" not in href:
-                        links.append(normalize_url(href))
+                        url = _site_url(href, source_host, allowed_host)
+                        if url:
+                            links.append(url)
             if links:
                 urls = list(dict.fromkeys(links))[:limit]
                 report("블로그 글 URL을 찾았습니다.", len(urls))
@@ -104,10 +133,13 @@ def collect(source_lines, limit, stop_event=None, progress=None):
         report(f"사이트맵을 확인하는 중: {candidate}")
         try:
             _, body = _fetch(candidate)
-            urls = [normalize_url(x) for x in _locs(body) if x.startswith(("http://", "https://")) and ".xml" not in x.lower()]
+            urls = [url for x in _locs(body)
+                    if x.startswith(("http://", "https://")) and ".xml" not in x.lower()
+                    if (url := _site_url(x, source_host, allowed_host))]
             if urls:
                 report("사이트맵에서 URL을 찾았습니다.", len(urls[:limit]))
                 return base, urls[:limit]
         except NetworkError:
             continue
     raise ValueError("사이트 URL에서 RSS 또는 사이트맵을 찾지 못했습니다. sitemap.xml 또는 개별 URL을 입력하세요.")
+
