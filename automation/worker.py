@@ -147,3 +147,4 @@ class AutomationWorker:
         except Exception as exc:
             self.log.exception("Report generation failed")
             self.emit("report_error", str(exc))
+
