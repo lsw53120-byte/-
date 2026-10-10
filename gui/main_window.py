@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
-from automation.collector import collect
+from automation.collector import MATNAM_HOST, collect
 from automation.chrome_launcher import open_connected_chrome
 from automation.worker import AutomationWorker
 from core.url_normalizer import is_in_property
@@ -74,7 +74,7 @@ class App(ctk.CTk):
         self.property_entry.pack(fill="x", padx=12, pady=(0, 8))
         if self.settings.property_url:
             self.property_entry.insert(0, self.settings.property_url)
-        ctk.CTkLabel(card, text="사이트 주소, sitemap.xml 또는 검사할 URL을 한 줄에 하나씩 입력").pack(anchor="w", padx=12, pady=(3, 2))
+        ctk.CTkLabel(card, text="matnam 사이트만 지원합니다. 사이트 주소는 전체 글 색인, 글 주소는 개별 색인입니다.").pack(anchor="w", padx=12, pady=(3, 2))
         self.input = ctk.CTkTextbox(card, height=115)
         self.input.pack(fill="x", padx=12, pady=(0, 8))
         self.input.insert("1.0", "https://")
@@ -183,7 +183,8 @@ class App(ctk.CTk):
             self._set_activity("사이트맵 또는 URL을 읽는 중입니다.", animate=True)
             self._log("입력 URL을 가져오는 중입니다.")
             progress = lambda message, count: self.events.put(("collect_status", (message, count)))
-            self.future = self.collector_pool.submit(collect, source, settings.max_urls, self.stop_event, progress)
+            self.future = self.collector_pool.submit(
+                collect, source, settings.max_urls, self.stop_event, progress, MATNAM_HOST)
             self.future.add_done_callback(lambda future: self.events.put(("collected", (future, settings))))
         except Exception as exc:
             self._finish_activity("시작할 수 없습니다.")
@@ -425,3 +426,4 @@ class App(ctk.CTk):
             self.collector_pool.shutdown(wait=False, cancel_futures=True)
         finally:
             self.destroy()
+
