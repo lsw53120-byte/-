@@ -11,12 +11,17 @@ RULES = [
         r"적절한 표준 태그가 포함된 대체 페이지", r"중복 페이지"]),
     (Status.CRAWLED_NOT_INDEXED, [r"crawled\s*[-–—]\s*currently not indexed", r"크롤링됨.*현재 색인이 생성되지"]),
     (Status.DISCOVERED_NOT_INDEXED, [r"discovered\s*[-–—]\s*currently not indexed", r"발견됨.*현재 색인이 생성되지"]),
+    (Status.DISCOVERED_NOT_INDEXED, [r"url을 google에 등록할 수 있음", r"url can be indexed"]),
     (Status.TEMP_ERROR, [r"temporarily unavailable", r"일시적으로 사용할 수 없", r"quota.*exceeded", r"할당량.*초과"]),
 ]
 
 
 def parse_status(text):
     value = re.sub(r"\s+", " ", text.lower())
+    # The live test result can appear over the old inspection card, so give
+    # its explicit positive result priority over stale redirect text.
+    if re.search(r"url을 google에 등록할 수 있음|url can be indexed", value, re.I):
+        return Status.DISCOVERED_NOT_INDEXED
     matches = [status for status, patterns in RULES if any(re.search(p, value, re.I) for p in patterns)]
     if len(matches) == 1:
         return matches[0]
@@ -27,3 +32,4 @@ def parse_status(text):
     if any(x in value for x in ("url is on google", "url이 google에 등록되어 있습니다", "페이지 색인이 생성됨")):
         return Status.INDEXED
     return Status.UNKNOWN
+
