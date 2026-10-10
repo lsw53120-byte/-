@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+build/
+dist/
+release/
+*.spec
+
+# Local user data and credentials must never be distributed.
+data/
+reports/
+logs/
+screenshots/
+chrome_profile/
+history.db
+history.sqlite3*
+settings.json
+token.json
+client_secret*.json
+app_config.json
+loop-review.json

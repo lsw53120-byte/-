@@ -11,7 +11,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from core.models import Inspection, Status
 from core.status_parser import parse_status
 from utils.exceptions import BrowserConnectionError, LoginRequiredError, SearchConsoleTimeout, IndexRequestError
-from automation.chrome_launcher import DEBUG_ADDRESS, is_debug_chrome_available
+from automation.chrome_launcher import is_debug_chrome_available
 
 URL_INSPECTION = "https://search.google.com/search-console"
 SEARCH_SELECTORS = [
@@ -28,13 +28,13 @@ class SearchConsole:
         self.log = logger or logging.getLogger("search_console")
         self.driver = None
 
-    def start(self):
-        if not is_debug_chrome_available():
+    def start(self, debug_port):
+        if not is_debug_chrome_available(debug_port):
             raise BrowserConnectionError(
                 "연결 가능한 Chrome을 찾지 못했습니다. 앱에서 [로그인 브라우저 열기]를 누른 뒤 Chrome 창을 열어 두세요."
             )
         options = Options()
-        options.debugger_address = DEBUG_ADDRESS
+        options.debugger_address = f"127.0.0.1:{debug_port}"
         try:
             self.driver = webdriver.Chrome(options=options)
             if not self.driver.window_handles:
@@ -114,11 +114,16 @@ class SearchConsole:
         if any(x in before for x in ("quota", "limit exceeded", "할당량", "요청 한도")):
             raise IndexRequestError("Google 요청 한도 안내가 표시되었습니다.")
         candidates = self.driver.find_elements(
-            By.XPATH, "//*[self::button or @role='button'][contains(.,'Request indexing') or contains(.,'색인 생성 요청') or contains(.,'색인 재요청')]")
+            By.XPATH,
+            "//*[self::button or @role='button']["
+            "contains(@aria-label,'Request indexing') or contains(@aria-label,'색인 생성 요청') or "
+            "contains(@aria-label,'색인 재요청') or contains(normalize-space(.),'Request indexing') or "
+            "contains(normalize-space(.),'색인 생성 요청') or contains(normalize-space(.),'색인 재요청')]"
+        )
         candidates = [button for button in candidates if button.is_displayed() and button.is_enabled()]
         if not candidates:
             raise IndexRequestError("화면에서 색인 생성 요청 버튼을 찾지 못했습니다.")
-        candidates[0].click()
+        self._click_visible(candidates[0])
         try:
             def accepted(driver):
                 text = driver.find_element(By.TAG_NAME, "body").text.lower()
@@ -139,13 +144,31 @@ class SearchConsole:
                 confirm = confirm_button(self.driver)
                 if not confirm:
                     raise IndexRequestError("확인 버튼을 찾지 못했습니다.")
-                confirm.click()
+                self._click_visible(confirm)
             WebDriverWait(self.driver, 20).until(
                 accepted)
             return "Google 화면에서 요청 접수 확인"
         except TimeoutException as exc:
             self._capture(url)
             raise IndexRequestError("요청 접수 확인 문구를 확인하지 못했습니다. 요청이 전송됐는지 Search Console에서 확인하세요.") from exc
+
+    def _click_visible(self, element):
+        """Use a normal click only when the target is visibly uncovered."""
+        try:
+            WebDriverWait(self.driver, 8).until(
+                lambda driver: driver.execute_script("""
+                    const e = arguments[0];
+                    e.scrollIntoView({block: 'center', inline: 'center'});
+                    const r = e.getBoundingClientRect();
+                    const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+                    return !!top && (top === e || e.contains(top));
+                """, element)
+            )
+            element.click()
+        except (TimeoutException, WebDriverException) as exc:
+            raise IndexRequestError(
+                "다른 화면 요소가 요청 버튼을 가리고 있습니다. Search Console의 열린 안내창을 닫고 다시 시도하세요."
+            ) from exc
 
     def _capture(self, url):
         try:

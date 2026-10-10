@@ -38,13 +38,14 @@ class AutomationWorker:
             profile = Path(profile) if profile else self.root / "chrome_profile"
             self.emit("phase", "로그인 Chrome을 연결하는 중입니다.")
             self.emit("log", "로그인 Chrome 연결을 준비합니다.")
-            self.emit("log", open_connected_chrome(profile))
+            debug_port, browser_message = open_connected_chrome(profile)
+            self.emit("log", browser_message)
             if self.stop.is_set():
                 self.store.finish_run(run_id, "STOPPED")
                 self._publish_report(run_id)
                 self.emit("finished", "중지했습니다. 남은 URL은 다음 실행에서 이어갈 수 있습니다.")
                 return
-            self.browser.start()
+            self.browser.start(debug_port)
             self.emit("phase", "Search Console에서 URL을 검사하는 중입니다.")
             self.emit("log", "연결된 Chrome의 로그인 상태와 Search Console 속성을 확인합니다.")
             for number, url in enumerate(urls, 1):

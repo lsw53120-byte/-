@@ -29,13 +29,14 @@ class ReinspectionTests(unittest.TestCase):
             settings = Settings(property_url="https://example.com/")
             events = Queue()
             sink = SimpleNamespace(events=events)
-            with patch("automation.worker.open_connected_chrome", return_value="Chrome ready"), \
+            with patch("automation.worker.open_connected_chrome", return_value=(54321, "Chrome ready")), \
                     patch("automation.worker.SearchConsole") as browser_type:
                 browser_type.return_value.inspect.return_value = Inspection(
                     status=Status.INDEXED, raw="URL is on Google")
                 worker = AutomationWorker(root, settings, App._queue_worker_event.__get__(sink),
                                           threading.Event())
                 worker.run(new_run)
+                browser_type.return_value.start.assert_called_once_with(54321)
                 browser_type.return_value.inspect.assert_called_once_with(url)
 
             store = HistoryStore(path)

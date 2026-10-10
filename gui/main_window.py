@@ -1,7 +1,6 @@
 import logging
 import os
 import queue
-import sys
 import threading
 import time
 import webbrowser
@@ -15,7 +14,7 @@ from automation.chrome_launcher import open_connected_chrome
 from automation.worker import AutomationWorker
 from core.url_normalizer import is_in_property
 from reports.html_report import generate_run_report
-from storage.history import HistoryStore, migrate_legacy_json
+from storage.history import HistoryStore
 from storage.settings import load_settings, save_settings
 from utils.logger import configure
 
@@ -26,7 +25,7 @@ ctk.set_default_color_theme("blue")
 class App(ctk.CTk):
     def __init__(self, data_dir=None):
         super().__init__()
-        self.title("Search Console URL 진단 도구")
+        self.title("블로그 검색노출 진단·색인요청 도우미")
         self.geometry("850x850")
         self.minsize(720, 680)
         self.root = Path(data_dir) if data_dir else Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "SearchConsoleTool"
@@ -35,20 +34,6 @@ class App(ctk.CTk):
         self.logger = configure(self.root)
         self.store = HistoryStore(self.root / "data" / "history.sqlite3")
         self.settings = load_settings(self.root)
-        old_tool_profile = Path.home() / "Desktop" / "\uc790\ub3d9\ud654" / "chrome_profile"
-        if not self.settings.chrome_profile_path and old_tool_profile.is_dir():
-            self.settings.chrome_profile_path = str(old_tool_profile)
-            save_settings(self.root, self.settings)
-        legacy = self.root / "data" / "indexed_history.json"
-        if not legacy.exists():
-            bundle_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
-            legacy = bundle_root / "data" / "indexed_history.json"
-        if legacy.exists() and not (self.root / "data" / "legacy_imported").exists():
-            try:
-                count = migrate_legacy_json(legacy, self.store)
-                (self.root / "data" / "legacy_imported").write_text(str(count), encoding="utf-8")
-            except Exception:
-                self.logger.exception("Legacy history migration failed")
         self.events = queue.Queue()
         self.stop_event = threading.Event()
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="search-console")
@@ -79,8 +64,8 @@ class App(ctk.CTk):
             self.after(500, self.open_report)
 
     def _build(self):
-        ctk.CTkLabel(self, text="Google Search Console URL 진단", font=ctk.CTkFont(size=24, weight="bold")).pack(anchor="w", padx=22, pady=(18, 2))
-        ctk.CTkLabel(self, text="URL을 모아 검사하고, 필요할 때만 요청 여부를 판단해 이력과 HTML 보고서를 저장합니다.",
+        ctk.CTkLabel(self, text="블로그 검색노출 진단·색인요청 도우미", font=ctk.CTkFont(size=24, weight="bold")).pack(anchor="w", padx=22, pady=(18, 2))
+        ctk.CTkLabel(self, text="URL 상태를 진단하고 조건에 맞을 때만 Google에 재크롤링 검토를 요청합니다.",
                      text_color="gray").pack(anchor="w", padx=22, pady=(0, 10))
         card = ctk.CTkFrame(self)
         card.pack(fill="x", padx=18, pady=8)
@@ -169,6 +154,15 @@ class App(ctk.CTk):
         settings.validate()
         if not settings.property_url:
             raise ValueError("Search Console 속성 주소를 입력하세요.")
+        if settings.auto_request:
+            approved = messagebox.askyesno(
+                "색인 요청 기능 확인",
+                "이 기능은 Google에 재크롤링 검토를 요청할 뿐 색인 완료·검색 노출·순위를 보장하지 않습니다.\n\n"
+                "소수의 본인 소유 URL에만 사용하고, Google이 표시하는 한도와 안내를 따라야 합니다. 계속할까요?",
+                parent=self,
+            )
+            if not approved:
+                raise ValueError("사용자가 색인 요청 기능을 취소했습니다.")
         save_settings(self.root, settings)
         return settings
 
@@ -314,7 +308,8 @@ class App(ctk.CTk):
                 elif kind == "browser_opened":
                     future = payload
                     try:
-                        self._log(future.result())
+                        _, browser_message = future.result()
+                        self._log(browser_message)
                         self._finish_activity("Chrome 연결 준비 완료")
                     except Exception as exc:
                         self._log(f"Chrome 연결 준비 실패: {exc}")

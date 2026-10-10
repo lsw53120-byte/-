@@ -1,4 +1,4 @@
-# Search Console URL 진단 도구
+# 블로그 검색노출 진단·색인요청 도우미
 
 Windows GUI that collects URLs from direct input, a sitemap, or a Blogspot feed, inspects each URL in Google Search Console, records per-URL history, resumes unfinished runs, and creates a local HTML report.
 
@@ -8,7 +8,7 @@ Windows GUI that collects URLs from direct input, a sitemap, or a Blogspot feed,
 2. In this folder, run: py -m pip install -r requirements.txt
 3. Run: py main.py
 4. Enter the exact URL-prefix property (for example https://example.com/) or a domain property (sc-domain:example.com) and URLs to inspect.
-5. Click “URL 가져오기 및 진단 시작”. The app collects URLs and prepares a connected Chrome automatically. If an earlier version saved a signed-in profile elsewhere, choose that custom chrome_profile folder first. If the profile is signed out, sign in, select the matching Search Console property, then click “중단 작업 이어하기”. The separate browser button remains available when you want to sign in before starting.
+5. Click “URL 가져오기 및 진단 시작”. The app collects URLs and prepares a dedicated connected Chrome automatically. If the profile is signed out, sign in, select the matching Search Console property, then click “중단 작업 이어하기”. The separate browser button remains available when you want to sign in before starting.
    Every click of the start button creates a fresh inspection run for the collected URLs, even if they were inspected recently. The resume button is only for unfinished runs. The request cooldown applies only to repeated indexing requests.
 6. Review the report and app log. Indexing requests are disabled by default. Enable them only when you want the tool to click a request action for eligible results.
 
@@ -23,17 +23,17 @@ The app writes under %LOCALAPPDATA%\SearchConsoleTool by default:
 * chrome_profile/: dedicated Chrome profile and sign-in session
 * reports/, logs/, screenshots/
 
-The supplied date-to-URL indexed_history.json is imported once as UNKNOWN history. It only says a URL was processed on that date; it does not prove that the URL was indexed. The original JSON is preserved. A stopped or interrupted URL remains queued and can be resumed from the app.
+A stopped or interrupted URL remains queued and can be resumed from the app. No history database, report, settings file, OAuth credential, or Chrome profile is bundled with a release.
 
 The connected Chrome profile contains session cookies. Protect the Windows account and sign out or delete the chrome_profile folder if you no longer want to retain that session. The app does not ask for or store a Google password. The app binds remote debugging to localhost only and does not copy cookies from the regular Chrome profile.
 
-If the former app's profile exists at Desktop/자동화/chrome_profile, the updated app selects it automatically. If that Chrome profile is currently open without remote debugging, close only that profile's Chrome window yourself before opening it through the app; the app will not terminate Chrome processes.
-
 Ordinary Chrome windows launched without remote debugging cannot be attached to after they have started. Chrome 136 and newer also reject remote debugging against the default Chrome data directory. This app therefore reuses a Chrome profile dedicated to this tool; it preserves the tool's prior sign-in session while keeping the regular profile separate.
+
+The app selects an available loopback-only debugging port instead of assuming port 9222. It remembers that port only for the dedicated app profile and never attaches to an unrelated debugging Chrome instance.
 
 ## Build
 
-Run build_exe.bat on Windows. The EXE and user data are separate so upgrades do not replace the database, reports, settings, or Chrome profile.
+Run `build_release.bat` on Windows 10 or 11. It builds `SearchConsoleHelper.exe` and creates `release/SearchConsoleHelper_Windows.zip` containing only the EXE and public documentation. Databases, reports, settings, OAuth files, and Chrome profiles are excluded. Build-script paths and commands use ASCII-only names to avoid Windows command-shell encoding failures.
 
 ## Layout
 
