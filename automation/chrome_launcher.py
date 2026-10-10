@@ -5,6 +5,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import quote
 from pathlib import Path
 
 from utils.exceptions import BrowserConnectionError
@@ -20,7 +21,26 @@ def _version_url(port):
 def is_debug_chrome_available(port):
     try:
         with urllib.request.urlopen(_version_url(port), timeout=0.75) as response:
-            return response.status == 200
+            if response.status != 200:
+                return False
+        # /json/version can remain available even when Chrome has no page
+        # target. Selenium cannot attach in that state.
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/json/list", timeout=0.75) as response:
+            import json
+            targets = json.loads(response.read().decode("utf-8"))
+        return any(target.get("type") == "page" for target in targets)
+    except (OSError, urllib.error.URLError):
+        return False
+
+
+def _open_debug_page(port):
+    try:
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/json/new?{quote(SEARCH_CONSOLE_URL, safe='')}",
+            method="PUT",
+        )
+        with urllib.request.urlopen(request, timeout=2) as response:
+            return response.status in (200, 201)
     except (OSError, urllib.error.URLError):
         return False
 
@@ -69,8 +89,19 @@ def open_connected_chrome(profile: Path):
     _reject_default_profile(profile)
     profile.mkdir(parents=True, exist_ok=True)
     remembered = _remembered_port(profile)
-    if remembered and is_debug_chrome_available(remembered):
-        return remembered, "기존 연결용 Chrome에 연결할 수 있습니다."
+    if remembered:
+        if is_debug_chrome_available(remembered):
+            return remembered, "기존 연결용 Chrome에 연결할 수 있습니다."
+        # A stale-but-live DevTools port may have no page target. Reuse it by
+        # opening the Search Console page instead of handing Selenium a dead
+        # target.
+        try:
+            with urllib.request.urlopen(_version_url(remembered), timeout=0.75) as response:
+                port_is_live = response.status == 200
+        except (OSError, urllib.error.URLError):
+            port_is_live = False
+        if port_is_live and _open_debug_page(remembered):
+            return remembered, "기존 Chrome에 Search Console 페이지를 열었습니다."
     port = _free_loopback_port()
     command = [
         str(_chrome_executable()),
@@ -96,3 +127,4 @@ def open_connected_chrome(profile: Path):
     raise BrowserConnectionError(
         "Chrome 연결 포트를 열지 못했습니다. 선택한 연결용 프로필의 Chrome 창을 닫은 뒤 다시 시도하세요."
     )
+
