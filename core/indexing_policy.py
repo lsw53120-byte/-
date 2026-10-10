@@ -1,7 +1,10 @@
 from datetime import datetime, timedelta, timezone
 from core.models import Settings, Status
 
-REQUESTABLE = {Status.DISCOVERED_NOT_INDEXED, Status.CRAWLED_NOT_INDEXED}
+# The user explicitly opted into automatic requests.  REDIRECT is included so
+# Search Console can receive the request when its result card exposes the
+# request link; Google still decides whether the URL can be accepted.
+REQUESTABLE = {Status.DISCOVERED_NOT_INDEXED, Status.CRAWLED_NOT_INDEXED, Status.REDIRECT}
 ADVICE = {
     Status.INDEXED: "정상 색인입니다. 추가 요청이 필요하지 않습니다.",
     Status.DISCOVERED_NOT_INDEXED: "사이트맵과 내부 링크, 서버 접근성을 확인하세요.",
@@ -32,8 +35,14 @@ def request_decision(status, settings, latest_attempt, daily_count, service_bloc
         return False, "검사 전용 설정입니다. 자동 색인 요청이 꺼져 있습니다."
     if service_blocked:
         return False, "Search Console에서 한도 또는 확인 화면을 표시했습니다."
-    if latest_attempt and datetime.now(timezone.utc) < _date(latest_attempt) + timedelta(days=settings.request_cooldown_days):
+    # Redirect results are explicitly included in the user's matnam workflow:
+    # the inspected URL is not the final page, so a fresh run must be allowed
+    # to submit the request for the current result instead of being hidden by
+    # a stale prior attempt record. The daily limit still prevents runaway
+    # submissions.
+    if status != Status.REDIRECT and latest_attempt and datetime.now(timezone.utc) < _date(latest_attempt) + timedelta(days=settings.request_cooldown_days):
         return False, "최근 요청 시도 이후 대기 기간입니다."
     if daily_count >= settings.daily_request_limit:
         return False, "설정된 일일 요청 한도에 도달했습니다."
     return True, "요청 가능한 상태이며 대기 기간과 일일 한도를 충족했습니다."
+
