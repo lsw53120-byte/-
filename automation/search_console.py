@@ -81,6 +81,10 @@ class SearchConsole:
                 lambda d: self._result_ready(d, url))
             body = self.driver.find_element(By.TAG_NAME, "body").text
             status = parse_status(body)
+            if status in (Status.REDIRECT, Status.UNKNOWN):
+                self._test_live_url(url)
+                body = self.driver.find_element(By.TAG_NAME, "body").text
+                status = parse_status(body)
             if status == Status.UNKNOWN and any(x in body.lower() for x in ("sign in", "로그인", "계정 선택")):
                 raise LoginRequiredError("Google 로그인이 필요합니다.")
             canonical = self._canonical(body)
@@ -114,6 +118,39 @@ class SearchConsole:
                 "현재 색인이 생성되지", "페이지 색인이 생성됨"))
         except WebDriverException:
             return False
+
+    def _test_live_url(self, url):
+        """Repeat Search Console's manual `실제 URL 테스트` before requesting."""
+        previous = self.driver.find_element(By.TAG_NAME, "body").text.lower()
+        candidates = self.driver.find_elements(
+            By.XPATH,
+            "//*[self::button or self::a or self::div or self::span or @role='button']["
+            "contains(normalize-space(.),'실제 URL 테스트') or "
+            "contains(normalize-space(.),'Test live URL')]",
+        )
+        visible = [button for button in candidates if button.is_displayed() and button.is_enabled()]
+        visible.sort(key=lambda element: (
+            0 if element.tag_name.lower() == "button" or element.get_attribute("role") == "button" else 1,
+            len((element.text or "").strip()),
+        ))
+        if not visible:
+            self.log.info("Live URL test button was not shown; using the inspected result for %s", url)
+            return
+        self._click_visible(visible[0])
+        def live_result_ready(driver):
+            try:
+                body = driver.find_element(By.TAG_NAME, "body").text.lower()
+                loading = any(token in body for token in (
+                    "google 색인에서 데이터를 가져오는 중",
+                    "google 색인에서 데이터 가져오는 중",
+                    "fetching data from google index",
+                ))
+                return body != previous and not loading
+            except WebDriverException:
+                return False
+        WebDriverWait(self.driver, self.timeout).until(live_result_ready)
+        WebDriverWait(self.driver, self.timeout).until(
+            lambda d: self._result_ready(d, url))
 
     def _wait_for_idle(self):
         """Wait until a previous URL's Search Console loading layer is gone."""
